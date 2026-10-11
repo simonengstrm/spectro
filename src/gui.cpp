@@ -5,10 +5,54 @@
 
 #include "raylib.h"
 
+namespace {
+// Maps a dB magnitude onto the spectrogram colour ramp. Anything under the
+// noise floor becomes background so quiet bins stay invisible.
+Color magnitudeToColor(float db) {
+  float intensity = std::clamp((db + 100.0f) / 100.0f, 0.0f, 1.0f);
+  if (intensity <= 0.15f) return BLACK;
+  return ColorFromHSV(240.0f - intensity * 240.0f, 1.0f, intensity);
+}
+}  // namespace
+
 void GUI::initialize() {
   SetConfigFlags(FLAG_WINDOW_RESIZABLE);
   InitWindow(GUI_WIDTH, GUI_HEIGHT, "Visualizer");
   SetTargetFPS(60);
+
+  BuildBinRanges();
+  columnPixels.resize(spectrogramHeight);
+
+  Image blank = GenImageColor(maxHistorySize, spectrogramHeight, BLACK);
+  spectrogramTexture = LoadTextureFromImage(blank);
+  UnloadImage(blank);
+}
+
+// Works out which FFT bins land on each pixel row once, so adding a column
+// costs one pass over the rows rather than one pass over every bin.
+void GUI::BuildBinRanges() {
+  const unsigned long lastBin = paddedSize / 2 - 1;
+  const float binsPerHz = static_cast<float>(paddedSize) / static_cast<float>(sampleRate);
+
+  binRanges.resize(spectrogramHeight);
+  for (unsigned row = 0; row < spectrogramHeight; ++row) {
+    // Row 0 is the top of the spectrogram and carries the highest frequency.
+    const float normTop = static_cast<float>(spectrogramHeight - row) / spectrogramHeight;
+    const float normBottom = static_cast<float>(spectrogramHeight - row - 1) / spectrogramHeight;
+
+    const float freqTop = std::pow(10.0f, logMin + normTop * (logMax - logMin));
+    const float freqBottom = std::pow(10.0f, logMin + normBottom * (logMax - logMin));
+
+    unsigned long begin = static_cast<unsigned long>(freqBottom * binsPerHz);
+    unsigned long end = static_cast<unsigned long>(std::ceil(freqTop * binsPerHz));
+
+    // Below roughly 500 Hz a row is narrower than one bin, so the range is
+    // widened to keep at least one bin per row.
+    begin = std::clamp(begin, 1UL, lastBin);
+    end = std::clamp(end, begin + 1, lastBin + 1);
+
+    binRanges[row] = {static_cast<unsigned>(begin), static_cast<unsigned>(end)};
+  }
 }
 
 void GUI::UpdateSpectrogramData() {
@@ -16,29 +60,29 @@ void GUI::UpdateSpectrogramData() {
     return;  // No new data available
   }
 
-  std::vector<float> magnitudes;
+  for (unsigned row = 0; row < spectrogramHeight; ++row) {
+    const BinRange range = binRanges[row];
 
-  const size_t fftSize = frontSpectrum.size();
-  const size_t halfSize = fftSize / 2;
-  magnitudes.resize(halfSize);
+    // Peak over the bins on this row, so a narrow partial survives the
+    // downscale instead of being overwritten by whichever bin is drawn last.
+    float peak = 0.0f;
+    for (unsigned bin = range.begin; bin < range.end; ++bin) {
+      peak = std::max(peak, std::abs(frontSpectrum[bin]));
+    }
 
-  for (unsigned long i = 0; i < halfSize; ++i) {
-    float magnitude = std::abs(frontSpectrum[i]);
-    float dbMagnitude = 20.0f * log10f(magnitude + 1e-6f);
-    magnitudes[i] = dbMagnitude;
+    columnPixels[row] = magnitudeToColor(20.0f * log10f(peak + 1e-6f));
   }
 
-  if (spectrogramHistory.size() >= maxHistorySize) {
-    spectrogramHistory.erase(spectrogramHistory.begin());
-  }
+  UpdateTextureRec(spectrogramTexture,
+                   Rectangle{static_cast<float>(writeColumn), 0.0f, 1.0f,
+                             static_cast<float>(spectrogramHeight)},
+                   columnPixels.data());
 
-  spectrogramHistory.push_back(magnitudes);
+  writeColumn = (writeColumn + 1) % maxHistorySize;
 }
 
 void GUI::DrawGridLines() {
   std::vector<float> octaveFreqs = {55.0f, 110.0f, 220.0f, 440.0f, 880.0f, 1760.0f, 3520.0f};
-  const float logMin = log10f(min_f);
-  const float logMax = log10f(max_f);
 
   for (float freq : octaveFreqs) {
     if (freq < min_f || freq > max_f) continue;
@@ -54,43 +98,24 @@ void GUI::DrawGridLines() {
 }
 
 void GUI::DrawSpectrogram() {
-  const float xStep = (float)(spectrogramWidth) / (float)maxHistorySize;
-  for (size_t t = 0; t < spectrogramHistory.size(); ++t) {
-    const auto& row = spectrogramHistory[t];
-    float x = t * xStep;
+  const float left = widthMargins / 2.0f;
+  const float height = static_cast<float>(spectrogramHeight);
+  const float columnWidth = static_cast<float>(spectrogramWidth) / maxHistorySize;
 
-    const size_t halfSize = row.size();
-    const float fftSize = halfSize * 2.0f;
+  // writeColumn is where the next column lands, which makes it the oldest one.
+  const float oldest = static_cast<float>(writeColumn);
+  const float oldestCount = static_cast<float>(maxHistorySize) - oldest;
 
-    for (size_t bin = 1; bin < halfSize - 1; ++bin) {
-      float freq = bin * sampleRate / fftSize;
-      float nextFreq = (bin + 1) * sampleRate / fftSize;
+  // Draw the older block and then the wrapped newer one, so time still runs
+  // left to right across the seam.
+  DrawTexturePro(spectrogramTexture, Rectangle{oldest, 0.0f, oldestCount, height},
+                 Rectangle{left, 0.0f, oldestCount * columnWidth, height}, Vector2{0.0f, 0.0f},
+                 0.0f, WHITE);
 
-      if (freq < min_f || freq > max_f) continue;
-
-      // Map to log
-      float yNorm = (log10f(freq) - logMin) / (logMax - logMin);
-      float yNextNorm = (log10f(nextFreq) - logMin) / (logMax - logMin);
-
-      if (yNorm < 0.0f || yNorm > 1.0f) continue;
-
-      float y = spectrogramHeight - (yNorm * spectrogramHeight);
-      float yNext = spectrogramHeight - (yNextNorm * spectrogramHeight);
-
-      float rectHeight = std::abs(yNext - y);
-      if (rectHeight < 1.0f) rectHeight = 1.0f;
-
-      // Color calc
-      float db = row[bin];
-      float intensity = (db + 100.0f) / 100.0f;
-      intensity = std::clamp(intensity, 0.0f, 1.0f);
-
-      Color c = ColorFromHSV(240.0f - intensity * 240.0f, 1.0f, intensity);
-      if (intensity > 0.15f) {
-        DrawRectangle((int)x + widthMargins / 2, (int)yNext, (int)xStep + 1, (int)rectHeight + 1,
-                      c);
-      }
-    }
+  if (writeColumn > 0) {
+    DrawTexturePro(spectrogramTexture, Rectangle{0.0f, 0.0f, oldest, height},
+                   Rectangle{left + oldestCount * columnWidth, 0.0f, oldest * columnWidth, height},
+                   Vector2{0.0f, 0.0f}, 0.0f, WHITE);
   }
 }
 
@@ -118,9 +143,10 @@ void GUI::DrawTuner() {
 
 void GUI::mainLoop() {
   while (!WindowShouldClose()) {
+    UpdateSpectrogramData();
+
     BeginDrawing();
     ClearBackground(BLACK);
-    UpdateSpectrogramData();
 
     DrawSpectrogram();
     DrawGridLines();
@@ -128,4 +154,7 @@ void GUI::mainLoop() {
 
     EndDrawing();
   }
+
+  UnloadTexture(spectrogramTexture);
+  CloseWindow();
 }

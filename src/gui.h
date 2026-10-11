@@ -4,6 +4,8 @@
 #include <cmath>
 #include <vector>
 
+#include "raylib.h"
+
 #include "freq_analysis.h"
 
 class GUI {
@@ -30,6 +32,7 @@ class GUI {
   void setTunerData(const NoteInfo& note) { currentNote = note; }
 
  private:
+  void BuildBinRanges();
   void UpdateSpectrogramData();
   void DrawSpectrogram();
   void DrawGridLines();
@@ -44,8 +47,7 @@ class GUI {
   NoteInfo currentNote{};
 
   // Scrolling spectrogram visualization data
-  std::vector<std::vector<float>> spectrogramHistory;
-  static constexpr size_t maxHistorySize = 150;
+  static constexpr unsigned maxHistorySize = 150;
   static inline constexpr float min_f = 70.0f;
   static inline constexpr float max_f = 4000.0f;
   static inline const float logMin = log10f(min_f);
@@ -59,4 +61,16 @@ class GUI {
   // Under the spectrogram
   static constexpr unsigned tunerHeight = GUI_HEIGHT * 0.2;
   static constexpr unsigned tunerWidth = GUI_WIDTH * 0.9;
+
+  // The spectrogram history is kept in a texture used as a ring buffer: a new
+  // spectrum writes a single column, which is all that gets uploaded, and
+  // drawing it costs two textured quads instead of one rectangle per bin.
+  struct BinRange {
+    unsigned begin;
+    unsigned end;
+  };
+  std::vector<BinRange> binRanges;  // One per pixel row, topmost row first
+  std::vector<Color> columnPixels;  // Scratch for the column being written
+  Texture2D spectrogramTexture{};
+  unsigned writeColumn{0};
 };
