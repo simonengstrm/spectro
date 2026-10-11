@@ -51,7 +51,10 @@ device is used. On a device with two or more inputs channel 1 is analysed
 | --- | --- |
 | `tab` | show/hide the controls panel |
 | `g` | toggle grid lines |
+| `s` | show/hide the spectrum plot |
 
 The panel adjusts the displayed frequency range, the dB window the colour ramp
-spans, and the noise gate. Changing the frequency range rebuilds the
-spectrogram, which clears the scrollback.
+and spectrum plot span, the noise gate, and how fast the spectrum trace falls
+back. Changing the frequency range rebuilds the spectrogram, which clears the
+scrollback. Hovering the spectrum plot shows the frequency and level under the
+cursor; levels are relative to the raw FFT magnitude, not calibrated dBFS.

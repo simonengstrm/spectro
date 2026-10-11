@@ -11,7 +11,7 @@
 class GUI {
  public:
   static constexpr unsigned GUI_WIDTH{1000};
-  static constexpr unsigned GUI_HEIGHT{680};
+  static constexpr unsigned GUI_HEIGHT{720};
 
   GUI(unsigned long sampleRate) : sampleRate(sampleRate) {}
   ~GUI() = default;
@@ -42,11 +42,12 @@ class GUI {
   // layout follows the window instead of fixed pixel constants.
   struct Layout {
     Rectangle header;
+    Rectangle spectrum;
     Rectangle spectrogram;
     Rectangle tuner;
   };
 
-  // The bins of one spectrogram pixel row, [begin, end).
+  // The bins of one pixel row or column, [begin, end).
   struct BinRange {
     unsigned begin;
     unsigned end;
@@ -62,10 +63,17 @@ class GUI {
   };
 
   Layout computeLayout() const;
+  BinRange logSliceBins(unsigned index, unsigned count) const;
+  float peakDb(BinRange range) const;
+
   void rebuildSpectrogram(unsigned height);
-  void updateSpectrogram();
+  void rebuildSpectrum(unsigned width);
+  void consumeSpectrum();
+  void writeSpectrogramColumn();
+  void stepSpectrum(float dt);
 
   void drawHeader(const Layout& layout) const;
+  void drawSpectrum(const Layout& layout) const;
   void drawSpectrogram(const Layout& layout) const;
   void drawFrequencyAxis(const Layout& layout) const;
   void drawTuner(const Layout& layout) const;
@@ -93,12 +101,22 @@ class GUI {
   unsigned writeColumn{0};
   bool rangeDirty{false};
 
+  // Live spectrum plot, one entry per pixel column, lowest frequency first.
+  // The target jumps to each new spectrum; the displayed level rises with it
+  // immediately and falls back at spectrumRelease, so the trace reads as
+  // motion instead of flicker.
+  std::vector<BinRange> spectrumBins;
+  std::vector<float> spectrumTarget;
+  std::vector<float> spectrumDisplay;
+
   // Live controls
   float minFreq{70.0f};
   float maxFreq{4000.0f};
   float dbFloor{-100.0f};
   float dbCeiling{0.0f};
   float gate{0.15f};
+  float spectrumRelease{48.0f};
   bool showGrid{true};
+  bool showSpectrum{true};
   bool showControls{false};
 };
