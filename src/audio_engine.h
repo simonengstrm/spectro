@@ -1,6 +1,7 @@
 #pragma once
 #include <array>
 #include <functional>
+#include <string>
 #include <thread>
 
 #include "pa_ringbuffer.h"
@@ -38,9 +39,15 @@ struct AudioEngine {
  private:
   bool initialized = false;
   int deviceIndex = -1;
+  // Channel layout of the opened stream, and which of its channels we capture
+  int channelCount = 0;
+  int captureChannel = 0;
   PaStream* inStream{nullptr};
   PaStreamParameters inStreamParameters{};
   std::array<SAMPLE, RING_BUFFER_SIZE> ringBufferData{};
+  // Scratch space for de-interleaving inside the PortAudio callback. Owned by
+  // the engine so the callback never allocates.
+  std::array<SAMPLE, SAMPLES_PER_CALLBACK> captureScratch{};
   std::jthread audioThread;
   audioCallback_t audioCallback;
   PaUtilRingBuffer ringBuffer{};

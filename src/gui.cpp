@@ -1,6 +1,7 @@
 #include "gui.h"
 
 #include <algorithm>
+#include <string>
 
 #include "raylib.h"
 
