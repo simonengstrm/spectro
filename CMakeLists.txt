@@ -1,16 +1,20 @@
 cmake_minimum_required(VERSION 3.24)
+
+# Default to a Release-style build when no configuration was requested, so
+# single-config generators still get optimizations. This has to happen before
+# project(): Platform/Windows-MSVC.cmake sets CMAKE_BUILD_TYPE_INIT to Debug,
+# which project() seeds into the cache, so a default chosen after this point
+# would never apply on Windows. Multi-config generators ignore the variable.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build configuration")
+endif()
+
 project(PitchDetector LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# Default to a Release-style build when no configuration was requested, so
-# single-config generators still get optimizations.
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "" FORCE)
-endif()
 
 # Some bundled dependencies (glfw inside raylib) still declare a
 # cmake_minimum_required below what CMake 4.x accepts on its own.
