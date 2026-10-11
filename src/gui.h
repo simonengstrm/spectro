@@ -1,7 +1,7 @@
 #pragma once
 
 #include <atomic>
-#include <cmath>
+#include <string>
 #include <vector>
 
 #include "raylib.h"
@@ -10,8 +10,8 @@
 
 class GUI {
  public:
-  static constexpr unsigned GUI_WIDTH{800};
-  static constexpr unsigned GUI_HEIGHT{600};
+  static constexpr unsigned GUI_WIDTH{1000};
+  static constexpr unsigned GUI_HEIGHT{680};
 
   GUI(unsigned long sampleRate) : sampleRate(sampleRate) {}
   ~GUI() = default;
@@ -19,6 +19,8 @@ class GUI {
   void initialize();
 
   void mainLoop();
+
+  void setDeviceName(std::string name) { deviceName = std::move(name); }
 
   void setNewSpectrumData(FFTData&& newSpectrum) {
     if (newSpectrumAvailable.load(std::memory_order_acquire)) {
@@ -29,14 +31,45 @@ class GUI {
     newSpectrumAvailable.store(true, std::memory_order_release);
   }
 
-  void setTunerData(const NoteInfo& note) { currentNote = note; }
+  void setTunerData(const NoteInfo& note) {
+    // Only the plain numbers cross the thread boundary; the note name is
+    // derived from the midi number when drawing.
+    tuner.store(Tuner{note.midi, note.cents, note.inputFreq, 0}, std::memory_order_release);
+  }
 
  private:
-  void BuildBinRanges();
-  void UpdateSpectrogramData();
-  void DrawSpectrogram();
-  void DrawGridLines();
-  void DrawTuner();
+  // Where each part of the window lands, recomputed every frame so the
+  // layout follows the window instead of fixed pixel constants.
+  struct Layout {
+    Rectangle header;
+    Rectangle spectrogram;
+    Rectangle tuner;
+  };
+
+  // The bins of one spectrogram pixel row, [begin, end).
+  struct BinRange {
+    unsigned begin;
+    unsigned end;
+  };
+
+  // Tuner readout as a trivially copyable value, so the audio thread can
+  // publish it without the GUI thread ever touching a half-written string.
+  struct Tuner {
+    int midi;
+    float cents;
+    float freq;
+    int reserved;
+  };
+
+  Layout computeLayout() const;
+  void rebuildSpectrogram(unsigned height);
+  void updateSpectrogram();
+
+  void drawHeader(const Layout& layout) const;
+  void drawSpectrogram(const Layout& layout) const;
+  void drawFrequencyAxis(const Layout& layout) const;
+  void drawTuner(const Layout& layout) const;
+  void drawControls();
 
   // Double buffered spectrum data to avoid locking during drawing
   FFTData backSpectrum{};
@@ -44,33 +77,28 @@ class GUI {
   std::atomic<bool> newSpectrumAvailable{false};
 
   unsigned long sampleRate;
-  NoteInfo currentNote{};
+  std::string deviceName{"unknown input"};
+  std::atomic<Tuner> tuner{Tuner{-1, 0.0f, 0.0f, 0}};
 
-  // Scrolling spectrogram visualization data
-  static constexpr unsigned maxHistorySize = 150;
-  static inline constexpr float min_f = 70.0f;
-  static inline constexpr float max_f = 4000.0f;
-  static inline const float logMin = log10f(min_f);
-  static inline const float logMax = log10f(max_f);
+  // How many spectra the scrollback holds. Columns arrive at the FFT hop
+  // rate, so this is time, not pixels.
+  static constexpr unsigned historyColumns = 200;
 
-  static constexpr unsigned spectrogramHeight = GUI_HEIGHT * 0.8;
-  static constexpr unsigned spectrogramWidth = GUI_WIDTH * 0.9;
-  static constexpr unsigned widthMargins = GUI_WIDTH - spectrogramWidth;
-  static constexpr unsigned heightMargins = GUI_HEIGHT - spectrogramHeight;
-
-  // Under the spectrogram
-  static constexpr unsigned tunerHeight = GUI_HEIGHT * 0.2;
-  static constexpr unsigned tunerWidth = GUI_WIDTH * 0.9;
-
-  // The spectrogram history is kept in a texture used as a ring buffer: a new
-  // spectrum writes a single column, which is all that gets uploaded, and
-  // drawing it costs two textured quads instead of one rectangle per bin.
-  struct BinRange {
-    unsigned begin;
-    unsigned end;
-  };
+  // The scrollback lives in a texture used as a ring buffer: a new spectrum
+  // writes one column, and drawing it costs two textured quads.
   std::vector<BinRange> binRanges;  // One per pixel row, topmost row first
   std::vector<Color> columnPixels;  // Scratch for the column being written
   Texture2D spectrogramTexture{};
+  unsigned textureHeight{0};
   unsigned writeColumn{0};
+  bool rangeDirty{false};
+
+  // Live controls
+  float minFreq{70.0f};
+  float maxFreq{4000.0f};
+  float dbFloor{-100.0f};
+  float dbCeiling{0.0f};
+  float gate{0.15f};
+  bool showGrid{true};
+  bool showControls{false};
 };

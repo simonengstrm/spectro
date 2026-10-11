@@ -50,6 +50,7 @@ int main(int argc, char* argv[]) {
   // Get sample rate
   const auto sampleRate = engine.getDeviceInfo()->defaultSampleRate;
   GUI gui{static_cast<unsigned long>(sampleRate)};
+  gui.setDeviceName(engine.getDeviceInfo()->name);
   gui.initialize();
 
   auto callback = [&](std::array<SAMPLE, SAMPLES_PER_CALLBACK> buffer, unsigned long bufferSize,

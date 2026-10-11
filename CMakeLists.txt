@@ -57,11 +57,40 @@ if(NOT raylib_FOUND)
     FetchContent_MakeAvailable(raylib)
 endif()
 
+# ---------------------------------------------------------------------------
+# Dear ImGui + rlImGui, for the live controls panel
+# ---------------------------------------------------------------------------
+# The rlImGui tag matching raylib 5.5 uses Dear ImGui's 1.92+ texture API
+# (ImTextureData / SetTexID), so the two versions have to move together.
+FetchContent_Declare(imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.92.7
+    GIT_SHALLOW TRUE
+)
+FetchContent_Declare(rlimgui
+    GIT_REPOSITORY https://github.com/raylib-extras/rlImGui.git
+    GIT_TAG Raylib_5_5
+    GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(imgui rlimgui)
+
+# Neither ships a CMakeLists, so they are compiled here as one library.
+add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${rlimgui_SOURCE_DIR}/rlImGui.cpp
+)
+target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${rlimgui_SOURCE_DIR})
+target_link_libraries(imgui PUBLIC raylib)
+
 add_subdirectory(src)
 
 target_link_libraries(PitchDetector PRIVATE
     portaudio
     raylib
+    imgui
 )
 
 # Warnings: the two compiler families take different flags.

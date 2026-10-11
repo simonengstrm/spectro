@@ -8,6 +8,7 @@ Made it because my tuner broke and I needed a replacement.
 
 Requires CMake 3.24+, a C++23 compiler and Git. PortAudio comes from the
 submodule; raylib is used from the system if installed and downloaded otherwise.
+Dear ImGui and rlImGui are fetched at configure time.
 
 ```sh
 git submodule update --init --recursive
@@ -43,3 +44,14 @@ The argument is a substring matched against the input device names PortAudio
 reports; it defaults to `Scarlett`. If nothing matches, the system default input
 device is used. On a device with two or more inputs channel 1 is analysed
 (instrument input on a Scarlett 2i2), otherwise channel 0.
+
+### Controls
+
+| key | action |
+| --- | --- |
+| `tab` | show/hide the controls panel |
+| `g` | toggle grid lines |
+
+The panel adjusts the displayed frequency range, the dB window the colour ramp
+spans, and the noise gate. Changing the frequency range rebuilds the
+spectrogram, which clears the scrollback.
