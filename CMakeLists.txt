@@ -85,30 +85,25 @@ add_library(imgui STATIC
 target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${rlimgui_SOURCE_DIR})
 target_link_libraries(imgui PUBLIC raylib)
 
-add_subdirectory(src)
-
-target_link_libraries(PitchDetector PRIVATE
-    portaudio
-    raylib
-    imgui
-)
-
-# Warnings: the two compiler families take different flags.
+# ---------------------------------------------------------------------------
+# Our own targets
+# ---------------------------------------------------------------------------
+# Warnings for our code only; the two compiler families take different flags.
+add_library(spectro_warnings INTERFACE)
 if(MSVC)
-    target_compile_options(PitchDetector PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(spectro_warnings INTERFACE /W4 /permissive- /utf-8)
 else()
-    target_compile_options(PitchDetector PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(spectro_warnings INTERFACE -Wall -Wextra -Wpedantic)
 endif()
 
-set_target_properties(PitchDetector PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-    # Keep the executable next to the binary dir root for every MSVC config.
-    RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}
-    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}
-    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL ${CMAKE_BINARY_DIR}
-)
+# Executables land in the binary dir root for every configuration, including
+# under multi-config generators.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+foreach(config IN ITEMS DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${config} ${CMAKE_BINARY_DIR})
+endforeach()
 
-if(WIN32)
-    target_link_libraries(PitchDetector PRIVATE winmm)
-endif()
+enable_testing()
+
+add_subdirectory(src)
+add_subdirectory(tests)

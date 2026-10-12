@@ -8,6 +8,8 @@
 
 #include "freq_analysis.h"
 
+class Recorder;
+
 class GUI {
  public:
   static constexpr unsigned GUI_WIDTH{1000};
@@ -22,6 +24,12 @@ class GUI {
 
   void setDeviceName(std::string name) { deviceName = std::move(name); }
 
+  // Optional; enables the record control. Must outlive the GUI.
+  void setRecorder(Recorder* r) { recorder = r; }
+
+  // Read by the analysis thread for every frame.
+  float tunerGateDb() const { return gateDb.load(std::memory_order_relaxed); }
+
   void setNewSpectrumData(FFTData&& newSpectrum) {
     if (newSpectrumAvailable.load(std::memory_order_acquire)) {
       return;  // Previous data not yet consumed
@@ -31,10 +39,11 @@ class GUI {
     newSpectrumAvailable.store(true, std::memory_order_release);
   }
 
-  void setTunerData(const NoteInfo& note) {
+  void setTunerData(const PitchResult& result) {
     // Only the plain numbers cross the thread boundary; the note name is
-    // derived from the midi number when drawing.
-    tuner.store(Tuner{note.midi, note.cents, note.inputFreq, 0}, std::memory_order_release);
+    // derived from the midi number when drawing. A gated frame has midi -1.
+    tuner.store(Tuner{result.note.midi, result.note.cents, result.frequency, result.levelDb},
+                std::memory_order_release);
   }
 
  private:
@@ -59,7 +68,7 @@ class GUI {
     int midi;
     float cents;
     float freq;
-    int reserved;
+    float levelDb;
   };
 
   Layout computeLayout() const;
@@ -78,6 +87,7 @@ class GUI {
   void drawFrequencyAxis(const Layout& layout) const;
   void drawTuner(const Layout& layout) const;
   void drawControls();
+  void toggleRecording();
 
   // Double buffered spectrum data to avoid locking during drawing
   FFTData backSpectrum{};
@@ -86,7 +96,12 @@ class GUI {
 
   unsigned long sampleRate;
   std::string deviceName{"unknown input"};
-  std::atomic<Tuner> tuner{Tuner{-1, 0.0f, 0.0f, 0}};
+  std::atomic<Tuner> tuner{Tuner{-1, 0.0f, 0.0f, -120.0f}};
+  std::atomic<float> gateDb{PitchSettings{}.gateDb};
+
+  Recorder* recorder{nullptr};
+  std::string lastTake;     // Path of the most recently saved take
+  double lastTakeTime{-1};  // GetTime() when it was saved
 
   // How many spectra the scrollback holds. Columns arrive at the FFT hop
   // rate, so this is time, not pixels.

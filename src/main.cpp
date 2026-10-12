@@ -7,6 +7,7 @@
 #include "audio_engine.h"
 #include "freq_analysis.h"
 #include "gui.h"
+#include "recorder.h"
 
 using std::cout;
 
@@ -49,21 +50,23 @@ int main(int argc, char* argv[]) {
 
   // Get sample rate
   const auto sampleRate = engine.getDeviceInfo()->defaultSampleRate;
+  Recorder recorder{static_cast<int>(sampleRate)};
   GUI gui{static_cast<unsigned long>(sampleRate)};
   gui.setDeviceName(engine.getDeviceInfo()->name);
+  gui.setRecorder(&recorder);
   gui.initialize();
 
   auto callback = [&](std::array<SAMPLE, SAMPLES_PER_CALLBACK> buffer, unsigned long bufferSize,
-                      [[maybe_unused]] int sampleRate) {
-    hannWindow(buffer.data(), bufferSize);
-    FFTData fftOutput{};
-    fft(buffer.data(), bufferSize, fftOutput);
+                      int sampleRate) {
+    // Record before analysis: analyzeFrame windows the buffer in place.
+    recorder.append(buffer.data(), bufferSize);
 
-    float frequency = findPeakFrequency(fftOutput, sampleRate);
-    NoteInfo note = freqToNote(frequency);
+    FFTData spectrum{};
+    const PitchResult result = analyzeFrame(buffer.data(), bufferSize, sampleRate,
+                                            PitchSettings{gui.tunerGateDb()}, spectrum);
 
-    gui.setNewSpectrumData(std::move(fftOutput));
-    gui.setTunerData(note);
+    gui.setNewSpectrumData(std::move(spectrum));
+    gui.setTunerData(result);
   };
 
   if (!engine.openStream()) {

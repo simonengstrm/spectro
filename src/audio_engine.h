@@ -4,11 +4,13 @@
 #include <string>
 #include <thread>
 
+#include "freq_analysis.h"
 #include "pa_ringbuffer.h"
 #include "portaudio.h"
 
 constexpr unsigned RING_BUFFER_SIZE{16384};
-constexpr unsigned SAMPLES_PER_CALLBACK{4096};
+// One callback delivers one analysis frame, so the size lives with the analysis.
+constexpr unsigned SAMPLES_PER_CALLBACK{analysisFrameSize};
 constexpr unsigned PA_SAMPLE_TYPE{paFloat32};
 
 using SAMPLE = float;

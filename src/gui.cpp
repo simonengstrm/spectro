@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "imgui.h"
+#include "recorder.h"
 #include "rlImGui.h"
 
 namespace {
@@ -279,9 +280,24 @@ void GUI::drawHeader(const Layout& layout) const {
   DrawText(deviceName.c_str(), static_cast<int>(r.x) + MeasureText("SPECTRO", 20) + 14,
            static_cast<int>(r.y) + 6, 10, COL_DIM);
 
-  drawTextRight(
-      TextFormat("%lu Hz   %u pt   tab: controls", sampleRate, static_cast<unsigned>(paddedSize)),
-      r.x + r.width, r.y + 6.0f, 10, COL_DIM);
+  const char* info =
+      TextFormat("%lu Hz   %u pt   tab: controls", sampleRate, static_cast<unsigned>(paddedSize));
+  drawTextRight(info, r.x + r.width, r.y + 6.0f, 10, COL_DIM);
+
+  // Recording state sits just left of the info text.
+  const float statusRight = r.x + r.width - static_cast<float>(MeasureText(info, 10)) - 24.0f;
+  if (recorder != nullptr && recorder->recording()) {
+    const char* rec = TextFormat("REC %.1f s", static_cast<double>(recorder->seconds()));
+    const float textX = statusRight - static_cast<float>(MeasureText(rec, 10));
+    // Blink the dot at 1 Hz, like a tape deck.
+    if (static_cast<int>(GetTime() * 2.0) % 2 == 0) {
+      DrawCircle(static_cast<int>(textX) - 9, static_cast<int>(r.y) + 11, 3.5f, COL_BAD);
+    }
+    DrawText(rec, static_cast<int>(textX), static_cast<int>(r.y) + 6, 10, COL_BAD);
+  } else if (!lastTake.empty() && GetTime() - lastTakeTime < 6.0) {
+    const std::string name = lastTake.substr(lastTake.find_last_of("/\\") + 1);
+    drawTextRight(TextFormat("saved %s", name.c_str()), statusRight, r.y + 6.0f, 10, COL_ACCENT);
+  }
 
   const int ruleY = static_cast<int>(r.y + r.height);
   DrawLine(static_cast<int>(r.x), ruleY, static_cast<int>(r.x + r.width), ruleY, COL_LINE);
@@ -454,6 +470,26 @@ void GUI::drawTuner(const Layout& layout) const {
                   r.y + 26.0f, 10, COL_DIM);
   }
 
+  // Input level against the gate, so the gate can be set by eye: the bar is
+  // dim while the tuner is gated and the amber tick is the threshold.
+  {
+    constexpr float levelMin = -80.0f;
+    constexpr float barWidth = 120.0f;
+    const float barX = r.x + r.width - barWidth;
+    const float barY = r.y + 46.0f;
+    const auto xForLevel = [&](float db) {
+      return barX + std::clamp((db - levelMin) / -levelMin, 0.0f, 1.0f) * barWidth;
+    };
+
+    DrawRectangleRec(Rectangle{barX, barY, barWidth, 3.0f}, COL_LINE);
+    DrawRectangleRec(Rectangle{barX, barY, xForLevel(note.levelDb) - barX, 3.0f},
+                     detected ? COL_TRACE : COL_DIM);
+    const float gateX = xForLevel(tunerGateDb());
+    DrawRectangleRec(Rectangle{gateX - 0.5f, barY - 3.0f, 1.0f, 9.0f}, COL_WARN);
+    drawTextRight(TextFormat("in %.0f dB", static_cast<double>(note.levelDb)), barX - 8.0f,
+                  barY - 3.0f, 10, COL_DIM);
+  }
+
   // Cents meter, ticked every 10 cents.
   const float meterY = r.y + 72.0f;
   const float half = r.width / 2.0f;
@@ -496,8 +532,23 @@ void GUI::drawControls() {
     ImGui::SliderFloat("floor dB", &dbFloor, -140.0f, -40.0f, "%.0f");
     // Loud input lands well above 0 on this uncalibrated scale, so leave room.
     ImGui::SliderFloat("ceil dB", &dbCeiling, -40.0f, 60.0f, "%.0f");
-    ImGui::SliderFloat("gate", &gate, 0.0f, 0.6f, "%.2f");
+    ImGui::SliderFloat("display gate", &gate, 0.0f, 0.6f, "%.2f");
     ImGui::Checkbox("grid lines", &showGrid);
+
+    ImGui::SeparatorText("tuner");
+    const Tuner note = tuner.load(std::memory_order_acquire);
+    float tunerGate = tunerGateDb();
+    if (ImGui::SliderFloat("gate dBFS", &tunerGate, -90.0f, -10.0f, "%.0f")) {
+      gateDb.store(tunerGate, std::memory_order_relaxed);
+    }
+    ImGui::TextDisabled("input %.0f dBFS %s", static_cast<double>(note.levelDb),
+                        note.midi < 0 ? "(gated)" : "");
+    if (recorder != nullptr) {
+      if (ImGui::Button(recorder->recording() ? "stop recording (r)" : "record take (r)")) {
+        toggleRecording();
+      }
+      if (!lastTake.empty()) ImGui::TextDisabled("%s", lastTake.c_str());
+    }
 
     ImGui::SeparatorText("spectrum");
     ImGui::Checkbox("spectrum plot", &showSpectrum);
@@ -511,12 +562,28 @@ void GUI::drawControls() {
   ImGui::End();
 }
 
+void GUI::toggleRecording() {
+  if (recorder == nullptr) return;
+
+  if (!recorder->recording()) {
+    recorder->start();
+    return;
+  }
+
+  const std::string saved = recorder->stop();
+  if (!saved.empty()) {
+    lastTake = saved;
+    lastTakeTime = GetTime();
+  }
+}
+
 void GUI::mainLoop() {
   while (!WindowShouldClose()) {
     const bool imguiHasKeys = ImGui::GetIO().WantCaptureKeyboard;
     if (!imguiHasKeys && IsKeyPressed(KEY_TAB)) showControls = !showControls;
     if (!imguiHasKeys && IsKeyPressed(KEY_G)) showGrid = !showGrid;
     if (!imguiHasKeys && IsKeyPressed(KEY_S)) showSpectrum = !showSpectrum;
+    if (!imguiHasKeys && IsKeyPressed(KEY_R)) toggleRecording();
 
     const Layout layout = computeLayout();
 
@@ -546,6 +613,8 @@ void GUI::mainLoop() {
 
     EndDrawing();
   }
+
+  if (recorder != nullptr && recorder->recording()) recorder->stop();
 
   rlImGuiShutdown();
   if (spectrogramTexture.id != 0) UnloadTexture(spectrogramTexture);

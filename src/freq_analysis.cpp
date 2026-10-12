@@ -8,7 +8,8 @@
 
 void hannWindow(float* buffer, unsigned long bufferSize) {
   for (unsigned long i = 0; i < bufferSize; ++i) {
-    buffer[i] *= 0.5f - 0.5f * std::cos(2 * std::numbers::pi * i / (bufferSize - 1));
+    buffer[i] = static_cast<float>(buffer[i] *
+                                   (0.5 - 0.5 * std::cos(2 * std::numbers::pi * i / (bufferSize - 1))));
   }
 }
 
@@ -21,7 +22,7 @@ void fft(const float* buffer, unsigned long bufferSize, FFTData& output) {
     }
   }
 
-  const int n = output.size();
+  const int n = static_cast<int>(output.size());
   for (int i = 1, j = 0; i < n; i++) {
     int bit = n >> 1;
     for (; j & bit; bit >>= 1) {
@@ -35,7 +36,7 @@ void fft(const float* buffer, unsigned long bufferSize, FFTData& output) {
   }
 
   for (int len = 2; len <= n; len <<= 1) {
-    float angle = -2 * std::numbers::pi / len;
+    const float angle = static_cast<float>(-2 * std::numbers::pi / len);
     std::complex<float> wlen(cos(angle), sin(angle));
 
     for (int i = 0; i < n; i += len) {
@@ -52,7 +53,7 @@ void fft(const float* buffer, unsigned long bufferSize, FFTData& output) {
 }
 
 void harmonicProductSpectrum(FFTData& fftData, unsigned long factor) {
-  const unsigned long size = fftData.size();
+  const unsigned long size = static_cast<unsigned long>(fftData.size());
   for (unsigned long i = 0; i < size / factor; ++i) {
     for (unsigned long j = 2; j <= factor; ++j) {
       fftData[i] *= fftData[i * j];
@@ -60,9 +61,8 @@ void harmonicProductSpectrum(FFTData& fftData, unsigned long factor) {
   }
 }
 
-float findPeakFrequency(const std::array<std::complex<float>, paddedSize>& fftData,
-                        int sampleRate) {
-  const unsigned long bufferSize = fftData.size();
+float findPeakFrequency(const FFTData& fftData, int sampleRate) {
+  const unsigned long bufferSize = static_cast<unsigned long>(fftData.size());
   float maxMagnitude = 0.0f;
   unsigned long peakIndex = 0;
 
@@ -95,17 +95,31 @@ float findMaxAmplitude(const float* buffer, unsigned long bufferSize) {
   return maxAmplitude;
 }
 
-float pitchDetection(const float* buffer, unsigned long bufferSize, int sampleRate) {
-  // Only perform FFT if the amplitude is above a threshold (noise gate)
-  if (findMaxAmplitude(buffer, bufferSize) < 0.01f) {  // Threshold to avoid noise
-    return 0.0f;
+float rmsDb(const float* buffer, unsigned long bufferSize) {
+  double sum = 0.0;
+  for (unsigned long i = 0; i < bufferSize; ++i) {
+    sum += static_cast<double>(buffer[i]) * buffer[i];
   }
+  const double rms = std::sqrt(sum / std::max(1UL, bufferSize));
+  return static_cast<float>(std::max(-120.0, 20.0 * std::log10(rms + 1e-12)));
+}
 
-  FFTData fftOutput{};
-  fft(buffer, bufferSize, fftOutput);
-  float frequency = findPeakFrequency(fftOutput, sampleRate);
+PitchResult analyzeFrame(float* frame, unsigned long frameSize, int sampleRate,
+                         const PitchSettings& settings, FFTData& spectrum) {
+  PitchResult result;
+  result.levelDb = rmsDb(frame, frameSize);
 
-  return frequency;
+  hannWindow(frame, frameSize);
+  fft(frame, frameSize, spectrum);
+
+  // Below the gate there is nothing worth naming; the spectrum is still
+  // computed above because the display wants it regardless.
+  result.gated = result.levelDb < settings.gateDb;
+  if (result.gated) return result;
+
+  result.frequency = findPeakFrequency(spectrum, sampleRate);
+  result.note = freqToNote(result.frequency);
+  return result;
 }
 
 NoteInfo freqToNote(float f) {
